@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-tester-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: load-tester-api
+  template:
+    metadata:
+      labels:
+        app: load-tester-api
+    spec:
+      containers:
+        - name: load-tester-api
+          image: load-tester-api:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 5000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 20
