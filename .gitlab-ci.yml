@@ -1,0 +1,16 @@
+stages:
+  - test
+  - build
+
+test:
+  stage: test
+  image: python:3.12
+
+  script:
+    - pip install -r requirements.txt
+    - pytest
+
+build:
+  stage: build
+  script:
+    - docker build -t load-tester-api .
