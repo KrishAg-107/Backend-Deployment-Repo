@@ -4,13 +4,18 @@ stages:
 
 test:
   stage: test
-  image: python:3.12
-
+  image: python:3.11
   script:
     - pip install -r requirements.txt
     - pytest
 
 build:
   stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
   script:
     - docker build -t load-tester-api .
