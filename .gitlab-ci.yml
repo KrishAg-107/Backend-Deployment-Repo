@@ -18,8 +18,9 @@ build:
   tags:
     - k3s
   script:
-    - docker build -t load-tester-api:$CI_COMMIT_SHORT_SHA .
-    - docker save load-tester-api:$CI_COMMIT_SHORT_SHA -o /tmp/load-tester-api.tar
+    - docker build --no-cache -t load-tester-api:latest .
+    - docker save load-tester-api:latest -o /tmp/load-tester-api.tar
+    - sudo k3s ctr -n k8s.io images rm docker.io/library/load-tester-api:latest || true
     - sudo k3s ctr -n k8s.io images import /tmp/load-tester-api.tar
 
 deploy:
@@ -31,5 +32,5 @@ deploy:
   script:
     - kubectl apply -f k8s/deployment.yaml
     - kubectl apply -f k8s/service.yaml
-    - kubectl set image deployment/load-tester-api load-tester-api=load-tester-api:$CI_COMMIT_SHORT_SHA
+    - kubectl rollout restart deployment/load-tester-api
     - kubectl rollout status deployment/load-tester-api --timeout=60s
