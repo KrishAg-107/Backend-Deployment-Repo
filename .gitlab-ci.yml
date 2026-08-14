@@ -18,7 +18,7 @@ build:
   tags:
     - k3s
   script:
-    - docker build -t load-tester-api:latest .
+    - docker build --no-cache -t load-tester-api:latest .
     - docker save load-tester-api:latest -o /tmp/load-tester-api.tar
     - sudo k3s ctr images import /tmp/load-tester-api.tar
 
@@ -33,5 +33,3 @@ deploy:
     - kubectl apply -f k8s/service.yaml
     - kubectl rollout restart deployment/load-tester-api
     - kubectl rollout status deployment/load-tester-api --timeout=60s
-    - kubectl get pods
-    - kubectl get services
