@@ -20,7 +20,7 @@ build:
   script:
     - docker build -t load-tester-api:$CI_COMMIT_SHORT_SHA .
     - docker save load-tester-api:$CI_COMMIT_SHORT_SHA -o /tmp/load-tester-api.tar
-    - sudo k3s ctr images import /tmp/load-tester-api.tar
+    - sudo k3s ctr -n k8s.io images import /tmp/load-tester-api.tar
 
 deploy:
   stage: deploy
