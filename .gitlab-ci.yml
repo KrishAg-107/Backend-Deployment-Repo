@@ -31,5 +31,5 @@ deploy:
   script:
     - kubectl apply -f k8s/deployment.yaml
     - kubectl apply -f k8s/service.yaml
-    - kubectl rollout restart deployment/load-tester-api
-    - kubectl rollout status deployment/load-tester-api --timeout=60s
+    - kubectl set image deployment/load-tester-api load-tester-api="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - kubectl rollout status deployment/load-tester-api --timeout=120s

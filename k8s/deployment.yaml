@@ -14,8 +14,8 @@ spec:
     spec:
       containers:
         - name: load-tester-api
-          image: load-tester-api:latest
-          imagePullPolicy: Never
+          image: registry.gitlab.com/KrishAg-107/load_tester:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 5000
           readinessProbe:
