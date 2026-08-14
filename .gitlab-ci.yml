@@ -1,21 +1,37 @@
 stages:
   - test
   - build
+  - deploy
 
 test:
   stage: test
-  image: python:3.11
+  tags:
+    - k3s
   script:
-    - pip install -r requirements.txt
-    - pytest
+    - python3 -m venv .venv
+    - .venv/bin/pip install -r requirements.txt
+    - .venv/bin/pip install pytest
+    - .venv/bin/pytest
 
 build:
   stage: build
-  image: docker:27
-  services:
-    - docker:27-dind
-  variables:
-    DOCKER_HOST: tcp://docker:2375
-    DOCKER_TLS_CERTDIR: ""
+  tags:
+    - k3s
   script:
-    - docker build -t load-tester-api .
+    - docker build -t load-tester-api:latest .
+    - docker save load-tester-api:latest -o /tmp/load-tester-api.tar
+    - sudo k3s ctr images import /tmp/load-tester-api.tar
+
+deploy:
+  stage: deploy
+  tags:
+    - k3s
+  variables:
+    KUBECONFIG: "/home/gitlab-runner/.kube/config"
+  script:
+    - kubectl apply -f k8s/deployment.yaml
+    - kubectl apply -f k8s/service.yaml
+    - kubectl rollout restart deployment/load-tester-api
+    - kubectl rollout status deployment/load-tester-api --timeout=60s
+    - kubectl get pods
+    - kubectl get services
