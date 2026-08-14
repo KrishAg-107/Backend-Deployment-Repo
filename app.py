@@ -6,7 +6,7 @@ app = Flask(__name__)
 @app.route("/")
 def home():
     return jsonify({
-        "message": "Load Tester API is running"
+        "message": "Load Tester API V2 is running"
     })
 
 
