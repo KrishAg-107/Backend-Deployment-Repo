@@ -1,3 +1,4 @@
+'
 from flask import Flask, jsonify
 
 app = Flask(__name__)
@@ -6,7 +7,7 @@ app = Flask(__name__)
 @app.route("/")
 def home():
     return jsonify({
-        "message": "Load Tester API V4 is running"
+        "message": "Load Tester API V6 is running"
     })
 
 
