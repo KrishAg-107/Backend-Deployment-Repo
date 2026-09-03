@@ -4,14 +4,14 @@ from flask_cors import CORS
 from analysis.sanity_check import sanity_check
 from analysis.type_detector import detect_type, try_find_sitemap, extract_paths_from_sitemap
 from analysis.edge_cases import generate_edge_cases
-from load_test_runner import start_load_test, start_website_load_test, get_job_status
-from job_store import init_db, list_jobs
+from load_test_runner import start_load_test, start_website_load_test, get_job_status, get_group_status
+from job_store import init_db, list_jobs, list_job_groups
 
 app = Flask(__name__)
 CORS(app)
 init_db()
 
-MAX_USERS = 50
+MAX_USERS = 1000
 MAX_DURATION_SECONDS = 300
 MAX_SPAWN_RATE = 20
 
@@ -29,6 +29,11 @@ def handle_404(e):
 
 @app.route("/api/health", methods=["GET"])
 def health_endpoint():
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/health", methods=["GET"])
+def health_alias_endpoint():
     return jsonify({"status": "ok"}), 200
 
 
@@ -97,6 +102,24 @@ def confirm_selection_endpoint():
     return jsonify({"confirmed_count": len(selected_cases), "confirmed_cases": selected_cases}), 200
 
 
+def _validate_load_test_params(data):
+    try:
+        users = int(data.get("users", 5))
+        spawn_rate = int(data.get("spawn_rate", 1))
+        duration_seconds = int(data.get("duration_seconds", 30))
+    except (TypeError, ValueError):
+        return None, ("users, spawn_rate, duration_seconds must be integers", 400)
+
+    if not (1 <= users <= MAX_USERS):
+        return None, (f"users must be between 1 and {MAX_USERS}", 400)
+    if not (1 <= spawn_rate <= MAX_SPAWN_RATE):
+        return None, (f"spawn_rate must be between 1 and {MAX_SPAWN_RATE}", 400)
+    if not (1 <= duration_seconds <= MAX_DURATION_SECONDS):
+        return None, (f"duration_seconds must be between 1 and {MAX_DURATION_SECONDS}", 400)
+
+    return (users, spawn_rate, duration_seconds), None
+
+
 @app.route("/api/start-load-test", methods=["POST"])
 def start_load_test_endpoint():
     data = request.get_json(silent=True) or {}
@@ -108,19 +131,10 @@ def start_load_test_endpoint():
     if not confirmed_cases or not isinstance(confirmed_cases, list):
         return jsonify({"error": "confirmed_cases (non-empty list) is required"}), 400
 
-    try:
-        users = int(data.get("users", 5))
-        spawn_rate = int(data.get("spawn_rate", 1))
-        duration_seconds = int(data.get("duration_seconds", 30))
-    except (TypeError, ValueError):
-        return jsonify({"error": "users, spawn_rate, duration_seconds must be integers"}), 400
-
-    if not (1 <= users <= MAX_USERS):
-        return jsonify({"error": f"users must be between 1 and {MAX_USERS}"}), 400
-    if not (1 <= spawn_rate <= MAX_SPAWN_RATE):
-        return jsonify({"error": f"spawn_rate must be between 1 and {MAX_SPAWN_RATE}"}), 400
-    if not (1 <= duration_seconds <= MAX_DURATION_SECONDS):
-        return jsonify({"error": f"duration_seconds must be between 1 and {MAX_DURATION_SECONDS}"}), 400
+    params, err = _validate_load_test_params(data)
+    if err:
+        return jsonify({"error": err[0]}), err[1]
+    users, spawn_rate, duration_seconds = params
 
     parsed = urlparse(target_url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
@@ -129,35 +143,23 @@ def start_load_test_endpoint():
     host = f"{parsed.scheme}://{parsed.netloc}"
     path = parsed.path or "/"
 
-    job_id = start_load_test(host, path, confirmed_cases, users, spawn_rate, duration_seconds)
-    return jsonify({"job_id": job_id, "status": "started"}), 202
+    job_id, is_group = start_load_test(host, path, confirmed_cases, users, spawn_rate, duration_seconds)
+    return jsonify({"job_id": job_id, "status": "started", "is_group": is_group}), 202
 
 
 @app.route("/api/start-website-load-test", methods=["POST"])
 def start_website_load_test_endpoint():
-    """Runs a plain concurrent GET load test against a website's pages —
-    either pulled from its sitemap, or falling back to just '/' if no
-    sitemap was found."""
     data = request.get_json(silent=True) or {}
     target_url = data.get("url")
-    sitemap_raw = data.get("sitemap_raw")  # optional: pass the raw sitemap XML from /api/analyze
+    sitemap_raw = data.get("sitemap_raw")
 
     if not target_url or not isinstance(target_url, str):
         return jsonify({"error": "url (string) is required"}), 400
 
-    try:
-        users = int(data.get("users", 5))
-        spawn_rate = int(data.get("spawn_rate", 1))
-        duration_seconds = int(data.get("duration_seconds", 30))
-    except (TypeError, ValueError):
-        return jsonify({"error": "users, spawn_rate, duration_seconds must be integers"}), 400
-
-    if not (1 <= users <= MAX_USERS):
-        return jsonify({"error": f"users must be between 1 and {MAX_USERS}"}), 400
-    if not (1 <= spawn_rate <= MAX_SPAWN_RATE):
-        return jsonify({"error": f"spawn_rate must be between 1 and {MAX_SPAWN_RATE}"}), 400
-    if not (1 <= duration_seconds <= MAX_DURATION_SECONDS):
-        return jsonify({"error": f"duration_seconds must be between 1 and {MAX_DURATION_SECONDS}"}), 400
+    params, err = _validate_load_test_params(data)
+    if err:
+        return jsonify({"error": err[0]}), err[1]
+    users, spawn_rate, duration_seconds = params
 
     parsed = urlparse(target_url)
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
@@ -169,14 +171,19 @@ def start_website_load_test_endpoint():
     if sitemap_raw:
         paths = extract_paths_from_sitemap(sitemap_raw)
     if not paths:
-        paths = [parsed.path or "/"]  # fallback: just hit the original page
+        paths = [parsed.path or "/"]
 
-    job_id = start_website_load_test(host, paths, users, spawn_rate, duration_seconds)
-    return jsonify({"job_id": job_id, "status": "started", "paths_used": paths}), 202
+    job_id, is_group = start_website_load_test(host, paths, users, spawn_rate, duration_seconds)
+    return jsonify({"job_id": job_id, "status": "started", "is_group": is_group, "paths_used": paths}), 202
 
 
 @app.route("/api/load-test-status/<job_id>", methods=["GET"])
 def load_test_status_endpoint(job_id):
+    # A split job's id is a group_id, not a single job_id — check that first.
+    group_status = get_group_status(job_id)
+    if group_status is not None:
+        return jsonify(group_status), 200
+
     status = get_job_status(job_id)
     if status is None:
         return jsonify({"error": "job_id not found"}), 404
@@ -185,7 +192,7 @@ def load_test_status_endpoint(job_id):
 
 @app.route("/api/jobs", methods=["GET"])
 def list_jobs_endpoint():
-    return jsonify({"jobs": list_jobs()}), 200
+    return jsonify({"jobs": list_jobs(), "job_groups": list_job_groups()}), 200
 
 
 @app.route("/api/compare-jobs", methods=["POST"])
@@ -197,8 +204,8 @@ def compare_jobs_endpoint():
     if not job_id_a or not job_id_b:
         return jsonify({"error": "job_id_a and job_id_b are required"}), 400
 
-    job_a = get_job_status(job_id_a)
-    job_b = get_job_status(job_id_b)
+    job_a = get_group_status(job_id_a) or get_job_status(job_id_a)
+    job_b = get_group_status(job_id_b) or get_job_status(job_id_b)
 
     if job_a is None:
         return jsonify({"error": f"job_id_a '{job_id_a}' not found"}), 404
@@ -209,4 +216,4 @@ def compare_jobs_endpoint():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=True, host="0.0.0.0", port=5000)

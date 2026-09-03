@@ -3,6 +3,7 @@ from urllib.parse import urljoin, urlparse
 import xml.etree.ElementTree as ET
 
 API_PATH_HINTS = ("/api/", "/v1/", "/v2/", "/graphql", "/rest/")
+NON_PAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf", ".css", ".js", ".xml", ".ico")
 
 
 def detect_type(url: str, headers: dict) -> dict:
@@ -51,24 +52,66 @@ def try_find_sitemap(base_url: str, timeout: float = 5.0) -> dict:
         return {"found": False, "sitemap_url": sitemap_url, "error": "unreachable"}
 
 
-def extract_paths_from_sitemap(sitemap_xml: str, max_paths: int = 20) -> list:
+def _local_tag(tag: str) -> str:
+    """Strips XML namespace prefix, e.g. '{http://...}urlset' -> 'urlset'."""
+    return tag.split("}")[-1] if "}" in tag else tag
+
+
+def _looks_like_page(path: str) -> bool:
+    """Filters out obvious non-page assets (images, stylesheets, etc.)
+    that sometimes end up in sitemaps alongside real pages."""
+    return not any(path.lower().endswith(ext) for ext in NON_PAGE_EXTENSIONS)
+
+
+def extract_paths_from_sitemap(sitemap_xml: str, max_paths: int = 20, _depth: int = 0, timeout: float = 5.0) -> list:
     """
-    Parses <loc> entries out of a sitemap.xml and returns just the
-    path portion (e.g. '/about', '/blog/post-1') so Locust can hit
-    them relative to --host.
+    Parses a sitemap.xml and returns real page paths (e.g. '/about').
+
+    Handles two cases:
+    - A regular sitemap (<urlset>): <loc> entries are real pages.
+    - A sitemap index (<sitemapindex>): <loc> entries point to OTHER
+      sitemap files, not pages themselves — we fetch a few of those
+      sub-sitemaps and extract real page paths from them instead.
+
+    Non-page assets (images, CSS, JS, etc.) are filtered out, since
+    sitemaps sometimes bundle these alongside real pages.
+
+    _depth caps recursion at one level.
     """
     try:
         root = ET.fromstring(sitemap_xml)
     except ET.ParseError:
         return []
 
-    ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-    locs = root.findall(".//sm:loc", ns) or root.findall(".//loc")
+    root_tag = _local_tag(root.tag)
+    loc_elements = [el for el in root.iter() if _local_tag(el.tag) == "loc"]
+    urls = [(el.text or "").strip() for el in loc_elements if el.text]
+
+    if root_tag == "sitemapindex":
+        if _depth >= 1:
+            return []
+
+        collected_paths = []
+        for sub_sitemap_url in urls[:5]:
+            try:
+                resp = requests.get(sub_sitemap_url, timeout=timeout)
+                if resp.status_code == 200:
+                    sub_paths = extract_paths_from_sitemap(
+                        resp.text, max_paths=max_paths, _depth=_depth + 1, timeout=timeout
+                    )
+                    collected_paths.extend(sub_paths)
+            except requests.exceptions.RequestException:
+                continue
+            if len(collected_paths) >= max_paths:
+                break
+
+        return collected_paths[:max_paths]
 
     paths = []
-    for loc in locs[:max_paths]:
-        url_text = (loc.text or "").strip()
-        if url_text:
-            paths.append(urlparse(url_text).path or "/")
-
+    for url_text in urls:
+        p = urlparse(url_text).path or "/"
+        if _looks_like_page(p):
+            paths.append(p)
+        if len(paths) >= max_paths:
+            break
     return paths

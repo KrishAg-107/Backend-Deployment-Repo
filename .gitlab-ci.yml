@@ -29,6 +29,7 @@ deploy:
   variables:
     KUBECONFIG: "/home/gitlab-runner/.kube/config"
   script:
+    - kubectl apply -f k8s/pvc.yaml
     - kubectl apply -f k8s/deployment.yaml
     - kubectl apply -f k8s/service.yaml
     - kubectl set image deployment/load-tester-api load-tester-api="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
